@@ -22,7 +22,10 @@ def get_traj(N_spokes=13, N_time=1, base_res=320, gind=1):
     base_lin = np.arange(N_samples).reshape(1, -1) - base_res
 
     tau = 0.5 * (1 + 5**0.5)
-    base_rad = np.pi / (gind + tau - 1)
+    base_rad = np.pi / (gind + tau - 1) # half-circle 
+
+    # base_rad = 137.50776405 * np.pi / 180; # full circle
+    print('> Golden Angle : ', base_rad * 180 / np.pi)
 
     base_rot = np.arange(N_tot_spokes).reshape(-1, 1) * base_rad
 
@@ -55,7 +58,9 @@ def get_coil(ksp, device=sp.Device(-1)):
     cim = F.H(ksp * dcf)
     cim = sp.fft(cim, axes=(-2, -1))
 
-    mps = app.EspiritCalib(cim, device=device).run()
+    cthresh=0.02 # default 0.02 in EspiritCalib
+    mps = app.EspiritCalib(cim, thresh=cthresh, device=device).run()
+
     return sp.to_device(mps)
 
 
@@ -76,11 +81,11 @@ if __name__ == "__main__":
     parser.add_argument('--spokes_per_frame', type=int, default=12,
                         help='number of spokes per frame')
 
-    parser.add_argument('--slice_idx', type=int, default=0,
-                        help='which slice index for the reconstruction to begin with')
-
-    parser.add_argument('--slice_inc', type=int, default=1,
-                        help='number of slices to be reconstructed')
+    #parser.add_argument('--slice_idx', type=int, default=0,
+    #                    help='which slice index for the reconstruction to begin with')
+ 
+    #parser.add_argument('--slice_inc', type=int, default=1,
+    #                    help='number of slices to be reconstructed')
 
     parser.add_argument('--center_partition', type=int, default=31,
                         help='the center partition index [default: 31]')
@@ -97,11 +102,12 @@ if __name__ == "__main__":
 
 
     # %% read in k-space data
-    IN_DIR = args.dir + '/' + args.data
-    #print('> read in data ', IN_DIR)
+    IN_DIR = args.dir + '/h5slices/' + args.data + '.h5'
+    print('> read in data ', IN_DIR)
+
     f = h5py.File(IN_DIR, 'r')
     ksp_f = f['kspace'][:].T
-    ksp_f = np.transpose(ksp_f, (4, 3, 2, 1, 0))
+    # ksp_f = np.transpose(ksp_f, (4, 3, 2, 1, 0))
     print('> kspace shape ', ksp_f.shape)
     f.close()
 
@@ -109,15 +115,13 @@ if __name__ == "__main__":
     ksp = np.transpose(ksp, (3, 2, 0, 1))
 
     # zero-fill the slice dimension
-    partitions = ksp.shape[0]
-    shift = int(args.images_per_slab / 2 - args.center_partition)
+    #partitions = ksp.shape[0]
+    #shift = int(args.images_per_slab / 2 - args.center_partition)
+    #ksp_zf = np.zeros_like(ksp, shape=[args.images_per_slab] + list(ksp.shape[1:]))
+    #ksp_zf[shift : shift + partitions, ...] = ksp
+    #ksp_zf = sp.fft(ksp_zf, axes=(0,))
 
-    ksp_zf = np.zeros_like(ksp, shape=[args.images_per_slab] + list(ksp.shape[1:]))
-    ksp_zf[shift : shift + partitions, ...] = ksp
-
-    ksp_zf = sp.fft(ksp_zf, axes=(0,))
-
-    N_slices, N_coils, N_spokes, N_samples = ksp_zf.shape
+    N_echoes, N_coils, N_spokes, N_samples = ksp.shape
 
     base_res = N_samples // 2
 
@@ -125,7 +129,7 @@ if __name__ == "__main__":
 
     N_spokes_prep = N_time * args.spokes_per_frame
 
-    ksp_redu = ksp_zf[:, :, :N_spokes_prep, :]
+    ksp_redu = ksp[:, :, :N_spokes_prep, :]
     print('  ksp_redu shape: ', ksp_redu.shape)
 
     # %% retrospecitvely split spokes
@@ -143,22 +147,29 @@ if __name__ == "__main__":
     print('  traj shape: ', traj.shape)
 
     # %% slice-by-slice recon
+    #if args.slice_idx >= 0:  # slice is echo in dgrasp
+    #    slice_loop = range(args.slice_idx, args.slice_idx + args.slice_inc, 1)
+    #else:
+    #    slice_loop = range(N_slices)
 
-    if args.slice_idx >= 0:
-        slice_loop = range(args.slice_idx, args.slice_idx + args.slice_inc, 1)
-    else:
-        slice_loop = range(N_slices)
+    echo_loop = range(N_echoes) 
+    acq_echoes = []
 
-    acq_slices = []
+    ##### Martin Kostal, 09/26/2025, use only first echo to compute coil maps 
+    print('> compute coil sensitivity maps')
+    C = get_coil(ksp[0], device=device)
+    C = C[:, None, :, :]
+    print('  coil shape: ', C.shape)   
+    #####
 
-    for s in slice_loop:
+    for s in echo_loop:
         print('>>> slice ', str(s).zfill(3))
 
         # coil sensitivity maps
-        print('> compute coil sensitivity maps')
-        C = get_coil(ksp_zf[s], device=device)
-        C = C[:, None, :, :]
-        print('  coil shape: ', C.shape)
+        #print('> compute coil sensitivity maps')
+        #C = get_coil(ksp[s], device=device)
+        #C = C[:, None, :, :]
+        #print('  coil shape: ', C.shape)
 
         # recon
         k1 = ksp_prep[s]
@@ -168,23 +179,43 @@ if __name__ == "__main__":
                         coord=traj,
                         regu='TV', regu_axes=[0],
                         max_iter=10,
+                        #water_fat=True,
                         solver='ADMM', rho=0.1,
                         device=device,
                         show_pbar=False,
                         verbose=True).run()
 
-        acq_slices.append(R1)
+        acq_echoes.append(R1)
 
-    acq_slices = sp.to_device(acq_slices)
+    acq_echoes = sp.to_device(acq_echoes)
 
-    acq_slices = cp.array(acq_slices)
-    acq_slices = cp.asnumpy(acq_slices)      
-    acq_slices = np.squeeze(np.angle(acq_slices)) #Martin Kostal changed abs() to np.angle()
+    acq_echoes = cp.array(acq_echoes)
+    acq_echoes = cp.asnumpy(acq_echoes)
 
-        # save recon files
-    f = h5py.File(OUT_DIR + '/' + args.dir + '_processed.h5', 'w')
-    dset = f.create_dataset('temptv', data=acq_slices)
+    ##### Martin Kostal, 09/23/2025, extract phase from reconstructed images
+    acq_echoes_phase = np.squeeze(np.angle(acq_echoes))
+    #####
+    acq_echoes = np.squeeze(abs(acq_echoes))
+
+    # save recon files magnitude and phase
+    OUT_DIR_slices = OUT_DIR + '/h5recon_' + str(args.spokes_per_frame) + 'spf'
+    pathlib.Path(OUT_DIR_slices).mkdir(parents=True, exist_ok=True)
+
+    f = h5py.File(OUT_DIR + '/h5recon_' + str(args.spokes_per_frame) + 'spf/' + args.data + '_' + str(args.spokes_per_frame) + 'spf.h5', 'w')
+    dset = f.create_dataset('temptv', data=acq_echoes)
     dset.attrs['spokes_per_frame'] = args.spokes_per_frame
     dset.attrs['number_of_frames'] = N_time
-    dset.attrs['number_of_slices'] = args.slice_inc
+    dset.attrs['number_of_echoes'] = N_echoes
     f.close()
+
+    ##### Martin Kostal, 09/23/2025, save phase images
+    OUT_DIR_slices_phase = OUT_DIR + '/h5recon_phase_' + str(args.spokes_per_frame) + 'spf'
+    pathlib.Path(OUT_DIR_slices_phase).mkdir(parents=True, exist_ok=True)
+    
+    f_phase = h5py.File(OUT_DIR + '/h5recon_phase_' + str(args.spokes_per_frame) + 'spf/' + args.data + '_' + str(args.spokes_per_frame) + 'spf.h5', 'w')
+    dset = f_phase.create_dataset('temptv', data=acq_echoes_phase)
+    dset.attrs['spokes_per_frame'] = args.spokes_per_frame
+    dset.attrs['number_of_frames'] = N_time
+    dset.attrs['number_of_echoes'] = N_echoes
+    f_phase.close()
+    #####

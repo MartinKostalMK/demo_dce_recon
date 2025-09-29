@@ -55,7 +55,8 @@ if __name__ == "__main__":
     R = f['temptv'][:]
     f.close()
 
-    R = np.squeeze(abs(R))
+    #R = np.squeeze(abs(R))
+    R = ((R + np.pi) / (2 * np.pi) * 65535).astype(np.uint16)
 
     R = np.flip(R, axis=(-2, -1)) # upward orientation
 
@@ -63,7 +64,8 @@ if __name__ == "__main__":
     print(R.shape)
 
     # normalize images
-    R = R * 533 / np.amax(R)
+    #R = R * 533 / np.amax(R)
+     
 
     print(np.amin(R))
     print(np.amax(R))
