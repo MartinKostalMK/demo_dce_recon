@@ -64,7 +64,7 @@ def get_coil(ksp, device=sp.Device(-1)):
     return sp.to_device(mps)
 
 
-# %%
+# %
 if __name__ == "__main__":
 
     # %% parse
