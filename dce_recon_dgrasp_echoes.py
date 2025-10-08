@@ -56,10 +56,34 @@ def get_coil(ksp, device=sp.Device(-1)):
     F = sp.linop.NUFFT(ishape, traj)
 
     cim = F.H(ksp * dcf)
-    cim = sp.fft(cim, axes=(-2, -1))
+    ##### Martin Kostal, 10/01/2025, save cim as a .mat file, to see what Espirit takes as input
+    #if hasattr(cim, 'numpy'):
+    #    cim_np = cim.numpy()
+    #else:
+    #    cim_np = np.array(cim)
+
+    #scipy.io.savemat('input_to_coil_maps.mat', {
+    #'cim_np': cim_np
+    #})   
+    #####
+    cim = sp.fft(cim, axes=(-2, -1)) # cim is back in k-space, as necessary for EspiritCalib input
 
     cthresh=0.02 # default 0.02 in EspiritCalib
+
     mps = app.EspiritCalib(cim, thresh=cthresh, device=device).run()
+
+    ##### Martin Kostal, 09/30/2025, save coil maps as a .mat file
+    # Convert from CuPy (GPU) to NumPy (CPU)
+    #mps_cpu = mps.get()  # or mps.get() if mps is a cupy array
+    
+    #mps_mag = np.abs(mps_np)       # shape: (n_coils, height, width)
+    #mps_phase = np.angle(mps_np)   # shape: (n_coils, height, width)
+
+    #scipy.io.savemat('coil_maps_mag_phase.mat', {
+    #'mps_mag': mps_mag,
+    #'mps_phase': mps_phase
+    #})
+    ##### 
 
     return sp.to_device(mps)
 
@@ -77,6 +101,12 @@ if __name__ == "__main__":
     parser.add_argument('--data',
                         default='fastMRI_breast_001_1.h5',
                         help='radial k-space data')
+
+    ##### Martin Kostal, 10/07/2025, argument for coil maps by slice
+    parser.add_argument('--coil_map',
+                        default='coil_map_slice_001.h5',
+                        help='Coil map slice filename (without extension)')
+    #####                    
 
     parser.add_argument('--spokes_per_frame', type=int, default=12,
                         help='number of spokes per frame')
@@ -155,15 +185,38 @@ if __name__ == "__main__":
     echo_loop = range(N_echoes) 
     acq_echoes = []
 
+    ##### Martin Kostal, 10/07/2025, read coil maps obtained by an arbitrary coil estimation method, by slices each stored as h5 file
+    IN_DIR = args.dir + '/h5_coil_map_slices/' + args.coil_map + '.h5'
+    print('> read in coilmap ', IN_DIR)
+
+    with h5py.File(IN_DIR, 'r') as f:
+        # Load the real and imaginary parts
+        real_part = f['data_real'][:]
+        imag_part = f['data_imag'][:]
+
+        # Combine into complex array
+        coilmaps = real_part + 1j * imag_part
+
+    # Now `coilmaps` is a numpy complex array
+    print(coilmaps.shape, coilmaps.dtype)
+
+    CMap = np.transpose(coilmaps, (2, 1, 0))
+    CMap = CMap[:, None, :, :]
+    print("now printing what I wanted to know: ")
+    print(CMap.shape, CMap.dtype)
+    ##### 
+
     ##### Martin Kostal, 09/26/2025, use only first echo to compute coil maps 
     print('> compute coil sensitivity maps')
     C = get_coil(ksp[0], device=device)
     C = C[:, None, :, :]
-    print('  coil shape: ', C.shape)   
+    print('  coil shape: ', C.shape)
+    print('C has type ',type(C))   
     #####
 
+
     for s in echo_loop:
-        print('>>> slice ', str(s).zfill(3))
+        print('>>> echo ', str(s).zfill(3))
 
         # coil sensitivity maps
         #print('> compute coil sensitivity maps')
