@@ -39,33 +39,6 @@ def get_traj(N_spokes=13, N_time=1, base_res=320, gind=1):
 
     return np.squeeze(traj)
 
-def get_traj2(N_spokes=13, N_time=1, base_res=320, gind=1):
-
-    N_tot_spokes = N_spokes * N_time
-
-    N_samples = base_res * 2
-
-    base_lin = np.arange(N_samples).reshape(1, -1) - base_res
-    base_lin = np.flip(base_lin, axis=1)
-
-    tau = 0.5 * (1 + 5**0.5)
-    base_rad = np.pi / (gind + tau - 1) # half-circle 
-
-    # base_rad = 137.50776405 * np.pi / 180; # full circle
-    print('> Golden Angle : ', base_rad * 180 / np.pi)
-
-    base_rot = np.arange(N_tot_spokes).reshape(-1, 1) * base_rad
-
-    traj = np.zeros((N_tot_spokes, N_samples, 2))
-    traj[..., 0] = np.cos(base_rot) @ base_lin
-    traj[..., 1] = np.sin(base_rot) @ base_lin
-
-    traj = traj / 2
-
-    traj = traj.reshape(N_time, N_spokes, N_samples, 2)
-
-    return np.squeeze(traj)
-
 # %% compute coil sensitivity maps
 def get_coil(ksp, device=sp.Device(-1)):
 
@@ -93,9 +66,10 @@ def get_coil(ksp, device=sp.Device(-1)):
     #'cim_np': cim_np
     #})   
     #####
-    cim = sp.fft(cim, axes=(-2, -1))
+    cim = sp.fft(cim, axes=(-2, -1)) # cim is back in k-space, as necessary for EspiritCalib input
 
-    cthresh=0.01 # default 0.02 in EspiritCalib
+    cthresh=0.02 # default 0.02 in EspiritCalib
+
     mps = app.EspiritCalib(cim, thresh=cthresh, device=device).run()
 
     ##### Martin Kostal, 09/30/2025, save coil maps as a .mat file
@@ -114,7 +88,7 @@ def get_coil(ksp, device=sp.Device(-1)):
     return sp.to_device(mps)
 
 
-# %%
+# %
 if __name__ == "__main__":
 
     # %% parse
@@ -127,12 +101,12 @@ if __name__ == "__main__":
     parser.add_argument('--data',
                         default='fastMRI_breast_001_1.h5',
                         help='radial k-space data')
-    
-    ##### Martin Kostal,10/07/2025, argument for external coil map slice
+
+    ##### Martin Kostal, 10/07/2025, argument for coil maps by slice
     parser.add_argument('--coil_map',
                         default='coil_map_slice_001.h5',
                         help='Coil map slice filename (without extension)')
-    #####  
+    #####                    
 
     parser.add_argument('--spokes_per_frame', type=int, default=12,
                         help='number of spokes per frame')
@@ -170,6 +144,7 @@ if __name__ == "__main__":
     ksp = ksp_f[0] + 1j * ksp_f[1]
     ksp = np.transpose(ksp, (3, 2, 0, 1))
 
+
     # zero-fill the slice dimension
     #partitions = ksp.shape[0]
     #shift = int(args.images_per_slab / 2 - args.center_partition)
@@ -195,16 +170,12 @@ if __name__ == "__main__":
     ksp_prep = np.transpose(ksp_prep, (3, 0, 2, 1, 4))
     ksp_prep = ksp_prep[:, :, None, :, None, :, :]
     print('  ksp_prep shape: ', ksp_prep.shape)
-
+    
+    
     # %% trajectories
     traj = get_traj(N_spokes=args.spokes_per_frame,
                     N_time=N_time, base_res=base_res,
                     gind=1)
-    # for even echoes
-    traj2 = get_traj2(N_spokes=args.spokes_per_frame,
-                    N_time=N_time, base_res=base_res,
-                    gind=1)
-
     print('  traj shape: ', traj.shape)
 
     # %% slice-by-slice recon
@@ -216,8 +187,7 @@ if __name__ == "__main__":
     echo_loop = range(N_echoes) 
     acq_echoes = []
 
-
-    ##### Martin Kostal, 11/03/2025, read coil maps obtained by an arbitrary coil estimation method external to this code, coils maps being slices each stored as h5 file
+    ##### Martin Kostal, 10/07/2025, read coil maps obtained by an arbitrary coil estimation method external to this code, coils maps being slices each stored as h5 file
     IN_DIR = args.dir + '/h5_coil_map_slices/' + args.coil_map + '.h5'
     print('> read in coilmap ', IN_DIR)
 
@@ -236,41 +206,35 @@ if __name__ == "__main__":
     CMap = CMap[:, None, :, :]
     print("now printing what I wanted to know: ")
     print(CMap.shape, CMap.dtype)
-    C2Map = np.flip(CMap, axis=2) # for even echoes
-    C2Map = np.flip(C2Map, axis=3) # for even echoes
     ##### 
 
+    ##### Martin Kostal, 09/26/2025, use only first echo to compute coil maps (ESPIRIT)
+    #print('> compute coil sensitivity maps')
+    #C = get_coil(ksp[0], device=device)
+    #C = C[:, None, :, :]
+    #print('  coil shape: ', C.shape)
+    #print('C has type ',type(C))   
+    #####
+
+
     for s in echo_loop:
-        print('>>> slice ', str(s).zfill(3))
+        print('>>> echo ', str(s).zfill(3))
 
-        # if s == 0:
-        #     # coil sensitivity maps
-        #     print('> compute coil sensitivity maps')
-        #     C = get_coil(ksp[s], device=device)
-        #     C = C[:, None, :, :]
-        #     print('  coil shape: ', C.shape)
-        #     C2 = np.flip(C, axis=2) # for even echoes
-        #     C2 = np.flip(C2, axis=3) # for even echoes
+        # coil sensitivity maps
+        #print('> compute coil sensitivity maps')
+        #C = get_coil(ksp[s], device=device)
+        #C = C[:, None, :, :]
+        #print('  coil shape: ', C.shape)
 
-        k1 = ksp_prep[s]
         # recon
-        if s % 2 == 0:
-            trajr=traj # for echoe= 0, 2, 4...
-            k1r=k1
-            Cr = CMap
-        else:
-            trajr=traj2  # for echoes = 1, 3, 5...
-            k1r=k1 #np.flip(k1, axis=1)
-            Cr = C2Map
-
-
-        R1 = app.HighDimensionalRecon(k1r, Cr,
+        k1 = ksp_prep[s]
+        R1 = app.HighDimensionalRecon(k1, CMap,
                         combine_echo=False,
                         lamda=0.001,
-                        coord=trajr,
+                        coord=traj,
                         regu='TV', regu_axes=[0],
                         max_iter=10,
-                        water_fat=True,
+                        #water_fat=True,
                         solver='ADMM', rho=0.1,
                         device=device,
                         show_pbar=False,
@@ -283,23 +247,10 @@ if __name__ == "__main__":
     acq_echoes = cp.array(acq_echoes)
     acq_echoes = cp.asnumpy(acq_echoes)
 
-    #"""
-    # flip echoes 1, 3, 5....
-    for s in echo_loop:
-        if s % 2 == 1:
-            tmp = acq_echoes[s, :, :, :]
-            print('   tmp: ', tmp.shape)
-            tmp = np.flip(tmp, axis=-1)
-            tmp = np.flip(tmp, axis=-2)
-            acq_echoes[s, :, :, :] = tmp
-            #print('  acq_echoes" ', acq_echoes.shape)
-    #"""
 
-    # complex images
     acq_echoes = np.squeeze(acq_echoes)
 
-
-    # save recon files
+    # save recon files 
     OUT_DIR_slices = OUT_DIR + '/h5recon_' + str(args.spokes_per_frame) + 'spf'
     pathlib.Path(OUT_DIR_slices).mkdir(parents=True, exist_ok=True)
 
