@@ -1,12 +1,12 @@
 #/bin/bin -l
 
 #for f in $(seq -w 136 300); do
-    f="90"
+    f="10"
     #DIR="/home/genekim/projects/dgrasp_recon/gsi_arm1/1104"
-    DIR="G:/Project-BreastDCEMRI/GSI-Arm1/1101/RAW_DATA"
+    DIR="~/data"
     DATA="slice${f}" # without .h5
 
-    SPOKES=35
+    SPOKES=13
 
     echo "> DIR: ${DIR}"
     echo "> DATA: ${DATA}"
