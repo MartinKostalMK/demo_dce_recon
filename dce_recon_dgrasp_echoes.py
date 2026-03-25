@@ -39,6 +39,33 @@ def get_traj(N_spokes=13, N_time=1, base_res=320, gind=1):
 
     return np.squeeze(traj)
 
+def get_traj2(N_spokes=13, N_time=1, base_res=320, gind=1):
+
+    N_tot_spokes = N_spokes * N_time
+
+    N_samples = base_res * 2
+
+    base_lin = np.arange(N_samples).reshape(1, -1) - base_res
+    base_lin = np.flip(base_lin, axis=1)
+
+    tau = 0.5 * (1 + 5**0.5)
+    base_rad = np.pi / (gind + tau - 1) # half-circle 
+
+    # base_rad = 137.50776405 * np.pi / 180; # full circle
+    print('> Golden Angle : ', base_rad * 180 / np.pi)
+
+    base_rot = np.arange(N_tot_spokes).reshape(-1, 1) * base_rad
+
+    traj = np.zeros((N_tot_spokes, N_samples, 2))
+    traj[..., 0] = np.cos(base_rot) @ base_lin
+    traj[..., 1] = np.sin(base_rot) @ base_lin
+
+    traj = traj / 2
+
+    traj = traj.reshape(N_time, N_spokes, N_samples, 2)
+
+    return np.squeeze(traj)
+
 # %% compute coil sensitivity maps
 def get_coil(ksp, device=sp.Device(-1)):
 
@@ -58,7 +85,7 @@ def get_coil(ksp, device=sp.Device(-1)):
     cim = F.H(ksp * dcf)
     cim = sp.fft(cim, axes=(-2, -1))
 
-    cthresh=0.02 # default 0.02 in EspiritCalib
+    cthresh=0.01 # default 0.02 in EspiritCalib
     mps = app.EspiritCalib(cim, thresh=cthresh, device=device).run()
 
     return sp.to_device(mps)
@@ -144,6 +171,11 @@ if __name__ == "__main__":
     traj = get_traj(N_spokes=args.spokes_per_frame,
                     N_time=N_time, base_res=base_res,
                     gind=1)
+    # for even echoes
+    traj2 = get_traj2(N_spokes=args.spokes_per_frame,
+                    N_time=N_time, base_res=base_res,
+                    gind=1)
+
     print('  traj shape: ', traj.shape)
 
     # %% slice-by-slice recon
@@ -158,18 +190,31 @@ if __name__ == "__main__":
     for s in echo_loop:
         print('>>> slice ', str(s).zfill(3))
 
-        # coil sensitivity maps
-        print('> compute coil sensitivity maps')
-        C = get_coil(ksp[s], device=device)
-        C = C[:, None, :, :]
-        print('  coil shape: ', C.shape)
+        if s == 0:
+            # coil sensitivity maps
+            print('> compute coil sensitivity maps')
+            C = get_coil(ksp[s], device=device)
+            C = C[:, None, :, :]
+            print('  coil shape: ', C.shape)
+            C2 = np.flip(C, axis=2) # for even echoes
+            C2 = np.flip(C2, axis=3) # for even echoes
 
-        # recon
         k1 = ksp_prep[s]
-        R1 = app.HighDimensionalRecon(k1, C,
+        # recon
+        if s % 2 == 0:
+            trajr=traj # for echoe= 0, 2, 4...
+            k1r=k1
+            Cr = C
+        else:
+            trajr=traj2  # for echoes = 1, 3, 5...
+            k1r=k1 #np.flip(k1, axis=1)
+            Cr = C2
+
+
+        R1 = app.HighDimensionalRecon(k1r, Cr,
                         combine_echo=False,
                         lamda=0.001,
-                        coord=traj,
+                        coord=trajr,
                         regu='TV', regu_axes=[0],
                         max_iter=10,
                         water_fat=True,
@@ -184,9 +229,24 @@ if __name__ == "__main__":
 
     acq_echoes = cp.array(acq_echoes)
     acq_echoes = cp.asnumpy(acq_echoes)
-    acq_echoes = np.squeeze(abs(acq_echoes))
 
-        # save recon files
+    #"""
+    # flip echoes 1, 3, 5....
+    for s in echo_loop:
+        if s % 2 == 1:
+            tmp = acq_echoes[s, :, :, :]
+            print('   tmp: ', tmp.shape)
+            tmp = np.flip(tmp, axis=-1)
+            tmp = np.flip(tmp, axis=-2)
+            acq_echoes[s, :, :, :] = tmp
+            #print('  acq_echoes" ', acq_echoes.shape)
+    #"""
+
+    # complex images
+    acq_echoes = np.squeeze(acq_echoes)
+
+
+    # save recon files
     OUT_DIR_slices = OUT_DIR + '/h5recon_' + str(args.spokes_per_frame) + 'spf'
     pathlib.Path(OUT_DIR_slices).mkdir(parents=True, exist_ok=True)
 
