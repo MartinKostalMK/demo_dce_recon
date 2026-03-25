@@ -184,7 +184,7 @@ if __name__ == "__main__":
 
     acq_echoes = cp.array(acq_echoes)
     acq_echoes = cp.asnumpy(acq_echoes)
-    acq_echoes = np.squeeze(abs(acq_echoes))
+    acq_echoes = np.squeeze(acq_echoes)
 
         # save recon files
     OUT_DIR_slices = OUT_DIR + '/h5recon_' + str(args.spokes_per_frame) + 'spf'
